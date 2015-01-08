@@ -319,6 +319,10 @@ class Query(BaseModel):
 
         return d
 
+    def archive(self):
+        self.is_archived = True
+        self.save()
+
     @classmethod
     def all_queries(cls):
         q = Query.select(Query, User,
@@ -329,7 +333,8 @@ class Query(BaseModel):
                      peewee.fn.Max(QueryResult.retrieved_at).alias('last_retrieved_at'))\
             .join(QueryResult, join_type=peewee.JOIN_LEFT_OUTER)\
             .switch(Query).join(User)\
-            .group_by(Query.id, User.id)
+            .group_by(Query.id, User.id)\
+            .where(Query.is_archived==False)
 
         return q
 
@@ -341,6 +346,7 @@ class Query(BaseModel):
             peewee.Func('first_value', cls.id).over(partition_by=[cls.query_hash, cls.data_source])) \
             .join(QueryResult) \
             .where(cls.ttl > 0,
+                   cls.is_archived==False,
                    (QueryResult.retrieved_at +
                     (cls.ttl * peewee.SQL("interval '1 second'"))) <
                    peewee.SQL("(now() at time zone 'utc')"))
@@ -539,13 +545,8 @@ def create_db(create_tables, drop_tables):
         if drop_tables and model.table_exists():
             # TODO: submit PR to peewee to allow passing cascade option to drop_table.
             db.database.execute_sql('DROP TABLE %s CASCADE' % model._meta.db_table)
-            #model.drop_table()
 
         if create_tables and not model.table_exists():
             model.create_table()
-    
-    Group.insert(name='admin', permissions=['admin'], tables=['*']).execute()
-    Group.insert(name='api', permissions=['view_query'], tables=['*']).execute()
-    Group.insert(name='default', permissions=Group.DEFAULT_PERMISSIONS, tables=['*']).execute()
 
     db.close_db(None)

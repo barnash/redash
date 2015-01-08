@@ -1,7 +1,7 @@
 import datetime
 from tests import BaseTestCase
 from redash import models
-from factories import dashboard_factory, query_factory, data_source_factory, query_result_factory
+from factories import dashboard_factory, query_factory, data_source_factory, query_result_factory, widget_factory
 from redash.utils import gen_query_hash
 
 
@@ -28,6 +28,49 @@ class QueryTest(BaseTestCase):
         q = models.Query.get_by_id(q.id)
 
         self.assertNotEquals(old_hash, q.query_hash)
+
+
+class QueryArchiveTest(BaseTestCase):
+    def setUp(self):
+        super(QueryArchiveTest, self).setUp()
+
+    def test_archive_query_sets_flag(self):
+        query = query_factory.create(ttl=1)
+        query.archive()
+        query = models.Query.get_by_id(query.id)
+
+        self.assertEquals(query.is_archived, True)
+
+    def test_archived_query_doesnt_return_in_all(self):
+        query = query_factory.create(ttl=1)
+        yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+        query_result = models.QueryResult.store_result(query.data_source.id, query.query_hash, query.query, "1",
+                                                       123, yesterday)
+
+        query.latest_query_data = query_result
+        query.save()
+
+        self.assertIn(query, models.Query.all_queries())
+        self.assertIn(query, models.Query.outdated_queries())
+
+        query.archive()
+
+        self.assertNotIn(query, models.Query.all_queries())
+        self.assertNotIn(query, models.Query.outdated_queries())
+
+    def test_removes_associated_widgets_from_dashboards(self):
+        widget = widget_factory.create()
+        query = widget.visualization.query
+
+        query.archive()
+
+        widget = models.Widget.get_by_id(widget.id)
+
+        # not in dashboard
+
+        self.assertIsNone(widget)
+
+        # should be removed from dashboards
 
 
 class QueryResultTest(BaseTestCase):
@@ -92,6 +135,7 @@ class QueryResultTest(BaseTestCase):
         found_query_result = models.QueryResult.get_latest(qr.data_source, qr.query, -1)
 
         self.assertEqual(found_query_result.id, qr.id)
+
 
 class TestQueryResultStoreResult(BaseTestCase):
     def setUp(self):
